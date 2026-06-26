@@ -1,0 +1,19 @@
+**DATOS DEL ALUMNO**
+
+Nombre y apellido: Martina Vergello
+
+Materia: Diseño y Programación de Páginas Web
+
+Comisión: DWM4AP
+
+Docente: Santiago Gallino
+
+Proyecto: PetConnect
+
+Tecnologías utilizadas:
+
+* Vue.js 3
+* Vite
+* Tailwind CSS
+* Supabase
+* JavaScript
