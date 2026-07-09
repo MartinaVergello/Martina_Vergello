@@ -12,11 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Consigna / extras locales (no subir)
+# Entregas / consigna (no subir)
 *.pdf
-README.md
-.htmlvalidate.json
-scripts/
+*.zip
+*.rar
 
 # Variables de entorno
 .env
