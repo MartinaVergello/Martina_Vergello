@@ -1,11 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
-import Home from '../pages/home.vue';
-import Login from '../pages/login.vue';
-import Register from '../pages/register.vue';
-import Feed from '../pages/feed.vue';
-import MyProfile from '../pages/myprofile.vue';
-import UserProfile from '../pages/userprofile.vue';
+import Home from '../pages/Home.vue';
+import Login from '../pages/Login.vue';
+import Register from '../pages/Register.vue';
+import Feed from '../pages/Feed.vue';
+import MyProfile from '../pages/MyProfile.vue';
+import UserProfile from '../pages/UserProfile.vue';
 
 const routes = [
     { path: '/', component: Home },

@@ -1,8 +1,8 @@
 <script>
-import { getCurrentUser } from '../services/auth';
-import { getPosts, createPost, subscribeToPosts } from '../services/posts';
-import { uploadPostImage } from '../services/storage';
-import PostCard from '../components/postcard.vue';
+import { getCurrentUser } from '../services/Auth';
+import { getPosts, createPost, getPostById, subscribeToPosts, applyPostChange } from '../services/Posts';
+import { uploadPostImage } from '../services/Storage';
+import PostCard from '../components/PostCard.vue';
 
 export default {
     name: 'Feed',
@@ -24,8 +24,8 @@ export default {
         this.user = await getCurrentUser();
         await this.loadPosts();
 
-        this.unsubscribePosts = subscribeToPosts(async () => {
-            await this.loadPosts();
+        this.unsubscribePosts = subscribeToPosts((payload) => {
+            this.handlePostChange(payload);
         });
     },
 
@@ -42,6 +42,18 @@ export default {
             } catch (error) {
                 this.error = error.message;
             }
+        },
+
+        async handlePostChange(payload) {
+            try {
+                this.posts = await applyPostChange(this.posts, payload, getPostById);
+            } catch (error) {
+                this.error = error.message;
+            }
+        },
+
+        handlePostDeleted(postId) {
+            this.posts = this.posts.filter(post => post.id !== postId);
         },
 
         handleImage(event) {
@@ -69,13 +81,15 @@ export default {
                     imageUrl = await uploadPostImage(this.image);
                 }
 
-                await createPost(this.user.id, this.content, imageUrl);
+                const newPost = await createPost(this.user.id, this.content, imageUrl);
+
+                if (!this.posts.some(post => post.id === newPost.id)) {
+                    this.posts.unshift(newPost);
+                }
 
                 this.content = '';
                 this.image = null;
                 this.$refs.imageInput.value = '';
-
-                await this.loadPosts();
             } catch (error) {
                 this.error = error.message;
             }
@@ -87,92 +101,96 @@ export default {
 </script>
 
 <template>
-    <main class="mx-auto max-w-2xl p-6">
-
-        <h1 class="mb-6 text-3xl font-bold">
-            Feed de mascotas
+    <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <h1 class="section-title mb-8">
+            Publicaciones
         </h1>
 
         <form
+            v-if="user"
+            class="pet-card mb-8 p-6"
+            aria-labelledby="feed-form-title"
             @submit.prevent="handleSubmit"
-            class="mb-6 rounded-lg border bg-white p-5 shadow"
+            novalidate
         >
-
-            <label class="mb-3 block text-lg font-bold">
+            <h2 id="feed-form-title" class="mb-4 text-xl font-bold text-pet-800">
                 Nueva publicación
-            </label>
+            </h2>
 
+            <label for="feed-content" class="mb-2 block font-bold text-pet-800">
+                Contenido
+            </label>
             <textarea
+                id="feed-content"
                 v-model="content"
+                name="content"
                 rows="4"
                 placeholder="¿Qué hizo tu mascota hoy?"
-                class="mb-4 w-full rounded-lg border p-3 focus:border-orange-500 focus:outline-none"
+                class="pet-input mb-4 resize-none"
+                required
             ></textarea>
 
-            <!-- Subir imagen -->
-
-            <label
-                class="mb-4 flex cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-orange-400 bg-orange-50 p-8 text-center transition hover:border-orange-500 hover:bg-orange-100"
-            >
-
-                <div>
-
-                    <p class="text-5xl">
-                        📷
-                    </p>
-
-                    <p class="mt-3 text-lg font-semibold text-orange-600">
-                        Hacé clic para seleccionar una imagen
-                    </p>
-
-                    <p class="text-sm text-gray-500">
-                        JPG · PNG · WEBP
-                    </p>
-
-                    <p
-                        v-if="image"
-                        class="mt-4 font-semibold text-green-600"
+            <div class="mb-4">
+                <p id="feed-image-label" class="mb-2 block font-bold text-pet-800">
+                    Foto (opcional)
+                </p>
+                <label class="pet-file block">
+                    <span class="pet-file-row">
+                        <span class="pet-file-button">Elegir archivo</span>
+                        <span class="pet-file-name">
+                            {{ image ? image.name : 'Ningún archivo seleccionado' }}
+                        </span>
+                    </span>
+                    <input
+                        id="feed-image"
+                        ref="imageInput"
+                        type="file"
+                        name="image"
+                        accept="image/*"
+                        class="pet-file-input"
+                        aria-labelledby="feed-image-label"
+                        @change="handleImage"
                     >
-                        ✅ {{ image.name }}
-                    </p>
+                </label>
+            </div>
 
-                </div>
-
-                <input
-                    ref="imageInput"
-                    type="file"
-                    accept="image/*"
-                    class="hidden"
-                    @change="handleImage"
-                >
-
-            </label>
-
-            <p
-                v-if="error"
-                class="mb-4 text-red-600"
-            >
+            <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-red-700">
                 {{ error }}
             </p>
 
-            <button
-                class="rounded-lg bg-orange-500 px-6 py-3 font-semibold text-white transition hover:bg-orange-600"
-            >
+            <button type="submit" class="pet-btn-primary">
                 {{ loading ? 'Publicando...' : 'Publicar' }}
             </button>
-
         </form>
 
-        <section class="space-y-5">
+        <div v-else class="pet-card mb-8 p-6 text-center">
+            <p class="font-bold text-pet-800">Tenés que entrar para publicar</p>
+            <div class="mt-4 flex flex-wrap justify-center gap-3">
+                <RouterLink to="/login" class="pet-btn-primary">Entrar</RouterLink>
+                <RouterLink to="/registro" class="pet-btn-secondary">Registrarse</RouterLink>
+            </div>
+        </div>
 
+        <section aria-labelledby="feed-posts-title" class="space-y-6">
+            <h2 id="feed-posts-title" class="sr-only">
+                Publicaciones
+            </h2>
             <PostCard
                 v-for="post in posts"
                 :key="post.id"
                 :post="post"
                 :user="user"
+                @deleted="handlePostDeleted"
             />
 
+            <div v-if="!posts.length" class="empty-state">
+                <h3 class="font-display text-xl font-bold text-pet-800">
+                    Todavía no hay nada acá
+                </h3>
+                <p class="mt-2">
+                    Publicá la primera si ya entraste.
+                </p>
+            </div>
         </section>
-
     </main>
 </template>

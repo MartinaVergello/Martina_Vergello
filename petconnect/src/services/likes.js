@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from './Supabase';
 
 export async function getLikesByPost(postId) {
     const { data, error } = await supabase
@@ -18,11 +18,12 @@ export async function likePost(postId, userId) {
             post_id: postId,
             user_id: userId,
         })
-        .select();
+        .select()
+        .single();
 
     if (error) throw error;
 
-    return data[0];
+    return data;
 }
 
 export async function unlikePost(postId, userId) {
@@ -46,7 +47,7 @@ export function subscribeToLikes(postId, callback) {
                 table: 'likes',
                 filter: 'post_id=eq.' + postId,
             },
-            () => callback()
+            (payload) => callback(payload)
         )
         .subscribe();
 

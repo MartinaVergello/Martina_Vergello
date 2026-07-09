@@ -1,8 +1,11 @@
 <script>
-import { getCurrentUser, logout, updatePassword } from '../services/auth';
-import { getProfileById, updateProfile, uploadAvatar } from '../services/profiles';
-import { getPostsByUser } from '../services/posts';
-import PostCard from '../components/postcard.vue';
+import { getCurrentUser, logout, updatePassword } from '../services/Auth';
+import { getProfileById, updateProfile, uploadAvatar } from '../services/Profiles';
+import { getPostsByUser, getPostById, subscribeToPosts, applyPostChange, removePostFromList } from '../services/Posts';
+import PostCard from '../components/PostCard.vue';
+
+const PASSWORD_COOLDOWN_MS = 5 * 60 * 1000;
+const PASSWORD_COOLDOWN_KEY = 'petconnect-password-cooldown';
 
 export default {
     name: 'MyProfile',
@@ -17,12 +20,44 @@ export default {
             bio: '',
             avatar: '',
             avatarFile: null,
+            removeAvatar: false,
             newPassword: '',
             posts: [],
             loading: false,
             error: '',
             success: '',
+            unsubscribePosts: null,
+            passwordCooldownUntil: 0,
+            cooldownTimer: null,
+            now: Date.now(),
         };
+    },
+
+    computed: {
+        avatarInitial() {
+            return (this.username || 'U').charAt(0).toUpperCase();
+        },
+        passwordChangeBlocked() {
+            return this.passwordCooldownRemaining > 0;
+        },
+        passwordCooldownRemaining() {
+            if (!this.passwordCooldownUntil) {
+                return 0;
+            }
+
+            return Math.max(0, this.passwordCooldownUntil - this.now);
+        },
+        passwordCooldownLabel() {
+            const totalSeconds = Math.ceil(this.passwordCooldownRemaining / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            if (minutes > 0) {
+                return `${minutes} min ${seconds.toString().padStart(2, '0')} s`;
+            }
+
+            return `${seconds} s`;
+        },
     },
 
     async mounted() {
@@ -33,17 +68,77 @@ export default {
             return;
         }
 
+        this.loadPasswordCooldown();
+        this.cooldownTimer = setInterval(() => {
+            this.now = Date.now();
+
+            if (!this.passwordChangeBlocked && this.passwordCooldownUntil) {
+                this.clearPasswordCooldown();
+            }
+        }, 1000);
+
         await this.loadProfile();
         await this.loadPosts();
+
+        this.unsubscribePosts = subscribeToPosts((payload) => {
+            this.handlePostChange(payload);
+        }, this.user.id);
+    },
+
+    unmounted() {
+        if (this.cooldownTimer) {
+            clearInterval(this.cooldownTimer);
+        }
+
+        if (this.unsubscribePosts) {
+            this.unsubscribePosts();
+        }
     },
 
     methods: {
+        getPasswordCooldownStorageKey() {
+            return `${PASSWORD_COOLDOWN_KEY}-${this.user.id}`;
+        },
+
+        loadPasswordCooldown() {
+            const storedUntil = localStorage.getItem(this.getPasswordCooldownStorageKey());
+
+            if (!storedUntil) {
+                this.passwordCooldownUntil = 0;
+                return;
+            }
+
+            const until = Number(storedUntil);
+
+            if (until > Date.now()) {
+                this.passwordCooldownUntil = until;
+            } else {
+                this.clearPasswordCooldown();
+            }
+        },
+
+        startPasswordCooldown() {
+            this.passwordCooldownUntil = Date.now() + PASSWORD_COOLDOWN_MS;
+            localStorage.setItem(
+                this.getPasswordCooldownStorageKey(),
+                String(this.passwordCooldownUntil)
+            );
+            this.now = Date.now();
+        },
+
+        clearPasswordCooldown() {
+            this.passwordCooldownUntil = 0;
+            localStorage.removeItem(this.getPasswordCooldownStorageKey());
+        },
+
         async loadProfile() {
             try {
                 this.profile = await getProfileById(this.user.id);
-                this.username = this.profile.username || '';
-                this.bio = this.profile.bio || '';
-                this.avatar = this.profile.avatar || '';
+                this.username = this.profile?.username
+                    || this.user.user_metadata?.username
+                    || '';
+                this.bio = this.profile?.bio || '';
+                this.avatar = this.profile?.avatar || '';
             } catch (error) {
                 this.error = error.message;
             }
@@ -57,8 +152,27 @@ export default {
             }
         },
 
+        async handlePostChange(payload) {
+            try {
+                this.posts = await applyPostChange(this.posts, payload, getPostById);
+            } catch (error) {
+                this.error = error.message;
+            }
+        },
+
+        handlePostDeleted(postId) {
+            this.posts = removePostFromList(this.posts, postId);
+        },
+
         handleAvatar(event) {
             this.avatarFile = event.target.files[0];
+            this.removeAvatar = false;
+        },
+
+        handleRemoveAvatar() {
+            this.avatar = '';
+            this.avatarFile = null;
+            this.removeAvatar = true;
         },
 
         async handleSubmit() {
@@ -66,14 +180,23 @@ export default {
             this.error = '';
             this.success = '';
 
+            if (this.newPassword && this.passwordChangeBlocked) {
+                this.error = `Podés cambiar la contraseña de nuevo en ${this.passwordCooldownLabel}.`;
+                this.loading = false;
+                return;
+            }
+
             try {
                 let avatarUrl = this.avatar;
+                let passwordChanged = false;
 
-                if (this.avatarFile) {
+                if (this.removeAvatar) {
+                    avatarUrl = null;
+                } else if (this.avatarFile) {
                     avatarUrl = await uploadAvatar(this.avatarFile, this.user.id);
                 }
 
-                await updateProfile(this.user.id, {
+                this.profile = await updateProfile(this.user.id, {
                     username: this.username,
                     bio: this.bio,
                     avatar: avatarUrl,
@@ -82,13 +205,16 @@ export default {
                 if (this.newPassword) {
                     await updatePassword(this.newPassword);
                     this.newPassword = '';
+                    passwordChanged = true;
+                    this.startPasswordCooldown();
                 }
 
-                await this.loadProfile();
-                await this.loadPosts();
-
+                this.avatar = avatarUrl || '';
                 this.avatarFile = null;
-                this.success = 'Perfil actualizado correctamente.';
+                this.removeAvatar = false;
+                this.success = passwordChanged
+                    ? 'Guardado. También cambiamos la contraseña.'
+                    : 'Cambios guardados.';
             } catch (error) {
                 this.error = error.message;
             }
@@ -105,144 +231,150 @@ export default {
 </script>
 
 <template>
-    <main class="mx-auto max-w-3xl p-6">
-        <section class="mb-6 rounded-xl border bg-white p-6 shadow-sm">
-            <div class="mb-6 flex items-center gap-4">
-                <img
-                    v-if="avatar"
-                    :src="avatar"
-                    alt="Foto de perfil"
-                    class="h-24 w-24 rounded-full object-cover"
-                >
+    <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <section class="pet-card overflow-hidden">
+            <div class="h-28 bg-pet-400 sm:h-36"></div>
 
-                <div
-                    v-else
-                    class="flex h-24 w-24 items-center justify-center rounded-full bg-orange-100 text-5xl"
-                >
-                    🐾
-                </div>
-
-                <div>
-                    <h1 class="text-3xl font-bold text-gray-900">
-                        Mi perfil
-                    </h1>
-
-                    <p class="text-gray-500">
-                        Editá tus datos, foto de perfil y contraseña.
-                    </p>
-                </div>
-            </div>
-
-            <p v-if="error" class="mb-3 rounded bg-red-100 p-3 text-red-700">
-                {{ error }}
-            </p>
-
-            <p v-if="success" class="mb-3 rounded bg-green-100 p-3 text-green-700">
-                {{ success }}
-            </p>
-
-            <form v-if="profile" @submit.prevent="handleSubmit" class="space-y-4">
-                <div>
-                    <label class="mb-1 block font-semibold">
-                        Nombre de usuario
-                    </label>
-
-                    <input
-                        v-model="username"
-                        type="text"
-                        class="w-full rounded-lg border p-3 focus:border-orange-500 focus:outline-none"
+            <div class="relative px-6 pb-6">
+                <div class="-mt-14 mb-5 flex flex-col items-center gap-4 sm:-mt-16 sm:flex-row sm:items-end">
+                    <img
+                        v-if="avatar"
+                        :src="avatar"
+                        alt="Foto de perfil"
+                        class="avatar-ring h-28 w-28 rounded-full object-cover sm:h-32 sm:w-32"
                     >
+
+                    <div
+                        v-else
+                        class="avatar-ring avatar-placeholder h-28 w-28 rounded-full text-3xl sm:h-32 sm:w-32"
+                        aria-hidden="true"
+                    >
+                        {{ avatarInitial }}
+                    </div>
+
+                    <div class="text-center sm:pb-2 sm:text-left">
+                        <h1 class="text-3xl font-bold text-pet-800">
+                            {{ username || 'Mi perfil' }}
+                        </h1>
+                    </div>
                 </div>
 
-                <div>
-                    <label class="mb-1 block font-semibold">
-                        Biografía
-                    </label>
+                <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-red-700">
+                    {{ error }}
+                </p>
 
-                    <textarea
-                        v-model="bio"
-                        rows="4"
-                        class="w-full rounded-lg border p-3 focus:border-orange-500 focus:outline-none"
-                        placeholder="Contá algo sobre vos y tu mascota..."
-                    ></textarea>
-                </div>
+                <p v-if="success" role="status" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-green-700">
+                    {{ success }}
+                </p>
 
-                <div>
-                    <label class="mb-2 block font-semibold">
-                        Foto de perfil
-                    </label>
+                <form class="space-y-5" @submit.prevent="handleSubmit" novalidate>
+                    <div>
+                        <label for="profile-username" class="mb-2 block font-bold text-pet-800">Nombre de usuario</label>
+                        <input id="profile-username" v-model="username" type="text" name="username" required class="pet-input">
+                    </div>
 
-                    <label class="block cursor-pointer rounded-lg border-2 border-dashed border-orange-400 bg-orange-50 p-5 text-center hover:bg-orange-100">
-                        <p class="font-semibold text-orange-600">
-                            📷 Hacé clic para elegir una foto
-                        </p>
+                    <div>
+                        <label for="profile-bio" class="mb-2 block font-bold text-pet-800">Biografía</label>
+                        <textarea
+                            id="profile-bio"
+                            v-model="bio"
+                            name="bio"
+                            rows="4"
+                            class="pet-input resize-none"
+                            placeholder="Algo sobre vos o tu mascota"
+                        ></textarea>
+                    </div>
 
-                        <p class="text-sm text-gray-500">
-                            JPG, PNG o WEBP
-                        </p>
+                    <div>
+                        <p id="profile-avatar-label" class="mb-2 block font-bold text-pet-800">Foto de perfil</p>
+                        <label class="pet-file block">
+                            <span class="pet-file-row">
+                                <span class="pet-file-button">Elegir archivo</span>
+                                <span class="pet-file-name">
+                                    {{ avatarFile ? avatarFile.name : 'Ningún archivo seleccionado' }}
+                                </span>
+                            </span>
+                            <input
+                                id="profile-avatar"
+                                type="file"
+                                name="avatar"
+                                accept="image/*"
+                                class="pet-file-input"
+                                aria-labelledby="profile-avatar-label"
+                                @change="handleAvatar"
+                            >
+                        </label>
 
-                        <p v-if="avatarFile" class="mt-2 text-green-600">
-                            ✅ {{ avatarFile.name }}
-                        </p>
-
-                        <input
-                            type="file"
-                            accept="image/*"
-                            class="hidden"
-                            @change="handleAvatar"
+                        <button
+                            v-if="avatar || avatarFile"
+                            type="button"
+                            class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+                            @click="handleRemoveAvatar"
                         >
-                    </label>
-                </div>
+                            Eliminar foto
+                        </button>
+                    </div>
 
-                <div>
-                    <label class="mb-1 block font-semibold">
-                        Nueva contraseña
-                    </label>
+                    <div>
+                        <label for="profile-password" class="mb-2 block font-bold text-pet-800">Nueva contraseña</label>
+                        <input
+                            id="profile-password"
+                            v-model="newPassword"
+                            type="password"
+                            name="new-password"
+                            autocomplete="new-password"
+                            class="pet-input disabled:cursor-not-allowed disabled:bg-stone-100"
+                            :disabled="passwordChangeBlocked"
+                            placeholder="Dejalo vacío si no la cambiás"
+                        >
+                        <p
+                            v-if="passwordChangeBlocked"
+                            class="mt-2 rounded-lg bg-pet-50 px-3 py-2 text-sm text-pet-800"
+                        >
+                            Podés cambiarla de nuevo en {{ passwordCooldownLabel }}.
+                        </p>
+                    </div>
 
-                    <input
-                        v-model="newPassword"
-                        type="password"
-                        class="w-full rounded-lg border p-3 focus:border-orange-500 focus:outline-none"
-                        placeholder="Dejar vacío si no querés cambiarla"
-                    >
-                </div>
-
-                <div class="flex gap-3">
-                    <button
-                        type="submit"
-                        class="rounded-lg bg-orange-500 px-5 py-3 font-semibold text-white hover:bg-orange-600"
-                    >
-                        {{ loading ? 'Guardando...' : 'Guardar cambios' }}
-                    </button>
-
-                    <button
-                        type="button"
-                        class="rounded-lg bg-gray-800 px-5 py-3 font-semibold text-white hover:bg-gray-900"
-                        @click="handleLogout"
-                    >
-                        Cerrar sesión
-                    </button>
-                </div>
-            </form>
+                    <div class="flex flex-wrap gap-3">
+                        <button type="submit" class="pet-btn-primary">
+                            {{ loading ? 'Guardando...' : 'Guardar cambios' }}
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-lg bg-stone-800 px-5 py-3 font-bold text-white transition hover:bg-stone-900"
+                            @click="handleLogout"
+                        >
+                            Cerrar sesión
+                        </button>
+                    </div>
+                </form>
+            </div>
         </section>
 
-        <section>
-            <h2 class="mb-4 text-2xl font-bold">
+        <section class="mt-8">
+            <h2 class="section-title mb-5">
                 Mis publicaciones
             </h2>
 
-            <div v-if="posts.length" class="space-y-5">
+            <div v-if="posts.length" class="space-y-6">
                 <PostCard
                     v-for="post in posts"
                     :key="post.id"
                     :post="post"
                     :user="user"
+                    @deleted="handlePostDeleted"
                 />
             </div>
 
-            <p v-else class="rounded-xl border bg-white p-6 text-center text-gray-500">
-                Todavía no hiciste publicaciones.
-            </p>
+            <div v-else class="empty-state">
+                <h3 class="font-display text-xl font-bold text-pet-800">
+                    Todavía no publicaste nada
+                </h3>
+                <p class="mt-2">Andá a publicaciones y subí algo.</p>
+                <RouterLink to="/feed" class="pet-btn-primary mt-5 inline-flex">
+                    Ver publicaciones
+                </RouterLink>
+            </div>
         </section>
     </main>
 </template>

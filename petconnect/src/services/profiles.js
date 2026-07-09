@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from './Supabase';
 
 export async function createProfile(id, username) {
     const { data, error } = await supabase
@@ -20,7 +20,7 @@ export async function getProfileById(id) {
         .from('profiles')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
     if (error) throw error;
 

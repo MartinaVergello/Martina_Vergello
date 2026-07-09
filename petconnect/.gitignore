@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# Consigna / extras locales (no subir)
+*.pdf
+README.md
+.htmlvalidate.json
+scripts/
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

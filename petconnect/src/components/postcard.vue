@@ -1,7 +1,7 @@
 <script>
-import { getComments, createComment, subscribeToComments } from '../services/comments';
-import { updatePost, deletePost } from '../services/posts';
-import { getLikesByPost, likePost, unlikePost, subscribeToLikes } from '../services/likes';
+import { getComments, createComment, getCommentById, subscribeToComments } from '../services/Comments';
+import { updatePost, deletePost } from '../services/Posts';
+import { getLikesByPost, likePost, unlikePost, subscribeToLikes } from '../services/Likes';
 
 export default {
     name: 'PostCard',
@@ -15,6 +15,7 @@ export default {
             default: null,
         },
     },
+    emits: ['deleted'],
     data() {
         return {
             comments: [],
@@ -23,6 +24,7 @@ export default {
             editing: false,
             editedContent: this.post.content,
             error: '',
+            imageOrientation: null,
             unsubscribeComments: null,
             unsubscribeLikes: null,
         };
@@ -34,17 +36,34 @@ export default {
         userLiked() {
             return this.user && this.likes.some(like => like.user_id === this.user.id);
         },
+        authorInitial() {
+            const name = this.post.profiles?.username || 'U';
+            return name.charAt(0).toUpperCase();
+        },
+    },
+    watch: {
+        'post.image'() {
+            this.imageOrientation = null;
+
+            this.$nextTick(() => {
+                this.checkImageOrientation();
+            });
+        },
     },
     async mounted() {
         await this.loadComments();
         await this.loadLikes();
 
-        this.unsubscribeComments = subscribeToComments(this.post.id, async () => {
-            await this.loadComments();
+        this.unsubscribeComments = subscribeToComments(this.post.id, (payload) => {
+            this.handleCommentChange(payload);
         });
 
-        this.unsubscribeLikes = subscribeToLikes(this.post.id, async () => {
-            await this.loadLikes();
+        this.unsubscribeLikes = subscribeToLikes(this.post.id, (payload) => {
+            this.handleLikeChange(payload);
+        });
+
+        this.$nextTick(() => {
+            this.checkImageOrientation();
         });
     },
     unmounted() {
@@ -71,21 +90,86 @@ export default {
                 this.error = error.message;
             }
         },
-        async handleLike() {
-            if (!this.user) {
-                this.error = 'Tenés que iniciar sesión para dar like.';
+        async handleCommentChange(payload) {
+            const { eventType, new: newRecord, old: oldRecord } = payload;
+
+            if (eventType === 'INSERT') {
+                if (this.comments.some(comment => comment.id === newRecord.id)) {
+                    return;
+                }
+
+                try {
+                    const comment = await getCommentById(newRecord.id);
+                    this.comments.push(comment);
+                } catch (error) {
+                    this.error = error.message;
+                }
+
                 return;
             }
 
-            try {
-                if (this.userLiked) {
-                    await unlikePost(this.post.id, this.user.id);
-                } else {
-                    await likePost(this.post.id, this.user.id);
+            if (eventType === 'UPDATE') {
+                const index = this.comments.findIndex(comment => comment.id === newRecord.id);
+
+                if (index !== -1) {
+                    this.comments[index] = {
+                        ...this.comments[index],
+                        ...newRecord,
+                    };
                 }
 
-                await this.loadLikes();
+                return;
+            }
+
+            if (eventType === 'DELETE') {
+                this.comments = this.comments.filter(comment => comment.id !== oldRecord.id);
+            }
+        },
+        handleLikeChange(payload) {
+            const { eventType, new: newRecord, old: oldRecord } = payload;
+
+            if (eventType === 'INSERT') {
+                if (!this.likes.some(like => like.id === newRecord.id)) {
+                    this.likes.push(newRecord);
+                }
+
+                return;
+            }
+
+            if (eventType === 'DELETE') {
+                this.likes = this.likes.filter(like => {
+                    if (oldRecord.id) {
+                        return like.id !== oldRecord.id;
+                    }
+
+                    return !(
+                        like.post_id === oldRecord.post_id
+                        && like.user_id === oldRecord.user_id
+                    );
+                });
+            }
+        },
+        async handleLike() {
+            if (!this.user) {
+                this.error = 'Tenés que iniciar sesión para dar me gusta.';
+                return;
+            }
+
+            const previousLikes = [...this.likes];
+
+            try {
+                if (this.userLiked) {
+                    this.likes = this.likes.filter(like => like.user_id !== this.user.id);
+                    await unlikePost(this.post.id, this.user.id);
+                } else {
+                    const like = await likePost(this.post.id, this.user.id);
+
+                    if (!this.likes.some(item => item.id === like.id)) {
+                        this.likes.push(like);
+                    }
+                }
             } catch (error) {
+                this.likes = previousLikes;
                 this.error = error.message;
             }
         },
@@ -98,9 +182,13 @@ export default {
             if (!this.newComment) return;
 
             try {
-                await createComment(this.post.id, this.user.id, this.newComment);
+                const comment = await createComment(this.post.id, this.user.id, this.newComment);
+
+                if (!this.comments.some(item => item.id === comment.id)) {
+                    this.comments.push(comment);
+                }
+
                 this.newComment = '';
-                await this.loadComments();
             } catch (error) {
                 this.error = error.message;
             }
@@ -109,8 +197,8 @@ export default {
             if (!this.editedContent) return;
 
             try {
-                await updatePost(this.post.id, this.editedContent);
-                this.post.content = this.editedContent;
+                const updatedPost = await updatePost(this.post.id, this.editedContent);
+                this.post.content = updatedPost.content;
                 this.editing = false;
             } catch (error) {
                 this.error = error.message;
@@ -123,115 +211,153 @@ export default {
 
             try {
                 await deletePost(this.post.id);
-                window.location.reload();
+                this.$emit('deleted', this.post.id);
             } catch (error) {
                 this.error = error.message;
             }
+        },
+
+        handleImageLoad(event) {
+            this.setImageOrientation(event.target);
+        },
+
+        checkImageOrientation() {
+            const img = this.$refs.postImage;
+
+            if (img?.complete) {
+                this.setImageOrientation(img);
+            }
+        },
+
+        setImageOrientation(img) {
+            if (!img?.naturalWidth || !img?.naturalHeight) {
+                return;
+            }
+
+            this.imageOrientation = img.naturalHeight >= img.naturalWidth ? 'portrait' : 'landscape';
         },
     },
 };
 </script>
 
 <template>
-    <article class="overflow-hidden rounded-xl border bg-white shadow-sm">
-        <header class="flex items-center justify-between border-b p-4">
+    <article class="pet-card overflow-hidden">
+        <header class="flex items-center justify-between border-b border-pet-100 bg-pet-50 px-5 py-4">
             <div class="flex items-center gap-3">
-                <div class="flex h-11 w-11 items-center justify-center rounded-full bg-orange-100 text-xl">
-                    🐾
+                <img
+                    v-if="post.profiles?.avatar"
+                    :src="post.profiles.avatar"
+                    :alt="'Foto de perfil de ' + (post.profiles?.username || 'usuario')"
+                    class="h-11 w-11 rounded-full object-cover ring-2 ring-pet-200"
+                >
+
+                <div
+                    v-else
+                    class="avatar-placeholder h-11 w-11 rounded-full text-sm"
+                    aria-hidden="true"
+                >
+                    {{ authorInitial }}
                 </div>
 
                 <div>
-                    <RouterLink
-                        :to="'/usuario/' + post.user_id"
-                        class="font-bold text-orange-600 hover:underline"
-                    >
-                        {{ post.profiles?.username || 'Usuario' }}
-                    </RouterLink>
+                    <h2 class="text-base font-bold leading-tight">
+                        <RouterLink
+                            :to="'/usuario/' + post.user_id"
+                            class="text-pet-700 transition hover:text-pet-500"
+                        >
+                            {{ post.profiles?.username || 'Usuario' }}
+                        </RouterLink>
+                    </h2>
 
-                    <p class="text-xs text-gray-500">
-                        {{ new Date(post.created_at).toLocaleString() }}
+                    <p class="text-xs text-stone-500">
+                        {{ new Date(post.created_at).toLocaleString('es-AR') }}
                     </p>
                 </div>
             </div>
 
-            <div v-if="isOwner" class="flex gap-2 text-sm">
+            <div v-if="isOwner" class="flex gap-2">
                 <button
                     v-if="!editing"
-                    class="rounded bg-blue-100 px-3 py-1 text-blue-700 hover:bg-blue-200"
+                    type="button"
+                    class="rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-pet-700 ring-1 ring-pet-200 transition hover:bg-pet-50"
                     @click="editing = true"
                 >
-                    ✏️ Editar
+                    Editar
                 </button>
 
                 <button
-                    class="rounded bg-red-100 px-3 py-1 text-red-700 hover:bg-red-200"
+                    type="button"
+                    class="rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-red-600 ring-1 ring-red-200 transition hover:bg-red-50"
                     @click="handleDelete"
                 >
-                    🗑 Eliminar
+                    Eliminar
                 </button>
             </div>
         </header>
 
-        <section class="p-4">
+        <section class="p-5">
             <div v-if="editing">
+                <label :for="'edit-post-' + post.id" class="mb-2 block font-bold text-pet-800">
+                    Editar publicación
+                </label>
                 <textarea
+                    :id="'edit-post-' + post.id"
                     v-model="editedContent"
-                    class="mb-3 w-full rounded-lg border p-3 focus:border-orange-500 focus:outline-none"
+                    class="pet-input mb-3 resize-none"
                     rows="3"
                 ></textarea>
 
                 <div class="flex gap-2">
-                    <button
-                        class="rounded bg-orange-500 px-4 py-2 text-white hover:bg-orange-600"
-                        @click="handleUpdate"
-                    >
+                    <button type="button" class="pet-btn-primary" @click="handleUpdate">
                         Guardar
                     </button>
-
-                    <button
-                        class="rounded bg-gray-200 px-4 py-2 hover:bg-gray-300"
-                        @click="editing = false"
-                    >
+                    <button type="button" class="pet-btn-secondary" @click="editing = false">
                         Cancelar
                     </button>
                 </div>
             </div>
 
-            <p v-else class="text-gray-800">
+            <p v-else class="text-lg leading-relaxed text-stone-700">
                 {{ post.content }}
             </p>
 
             <img
                 v-if="post.image"
+                ref="postImage"
                 :src="post.image"
                 alt="Imagen de la publicación"
-                class="mt-4 max-h-96 w-full rounded-xl object-cover"
+                class="post-image mt-4"
+                :class="{
+                    'post-image--portrait': imageOrientation === 'portrait',
+                    'post-image--landscape': imageOrientation === 'landscape',
+                }"
+                @load="handleImageLoad"
             >
 
-            <div class="mt-4 flex items-center gap-4 border-t pt-4">
+            <div class="mt-5 flex items-center gap-4 border-t border-pet-100 pt-4">
                 <button
-                    class="rounded-full px-4 py-2 font-semibold transition"
-                    :class="userLiked ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
+                    type="button"
+                    class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+                    :class="userLiked
+                        ? 'bg-pet-100 text-pet-700 ring-1 ring-pet-300'
+                        : 'bg-pet-50 text-pet-700 hover:bg-pet-100'"
                     @click="handleLike"
                 >
-                    {{ userLiked ? '❤️ Te gusta' : '🤍 Me gusta' }}
+                    {{ userLiked ? 'Te gusta' : 'Me gusta' }}
                 </button>
 
-                <p class="text-sm text-gray-500">
+                <span class="text-sm text-stone-500">
                     {{ likes.length }} me gusta
-                </p>
+                </span>
             </div>
         </section>
 
-        <section class="border-t bg-gray-50 p-4">
-            <h3 class="mb-3 font-bold">
-                Comentarios
-                <span class="text-sm font-normal text-gray-500">
-                    ({{ comments.length }})
-                </span>
+        <section class="border-t border-pet-100 bg-pet-50 p-5">
+            <h3 class="mb-4 font-bold text-pet-800">
+                Comentarios ({{ comments.length }})
             </h3>
 
-            <p v-if="error" class="mb-3 text-sm text-red-600">
+            <p v-if="error" role="alert" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                 {{ error }}
             </p>
 
@@ -239,29 +365,34 @@ export default {
                 <li
                     v-for="comment in comments"
                     :key="comment.id"
-                    class="rounded-lg bg-white p-3 text-sm shadow-sm"
+                    class="rounded-lg bg-white px-4 py-3 text-sm ring-1 ring-pet-100"
                 >
-                    <strong class="text-orange-600">
-                        {{ comment.profiles?.username || 'Usuario' }}:
+                    <strong class="text-pet-700">
+                        {{ comment.profiles?.username || 'Usuario' }}
                     </strong>
-                    {{ comment.content }}
+                    <span class="text-stone-600">: {{ comment.content }}</span>
                 </li>
             </ul>
 
-            <p v-else class="mb-4 text-sm text-gray-500">
-                Todavía no hay comentarios.
+            <p v-else class="mb-4 text-sm text-stone-500">
+                Sin comentarios.
             </p>
 
-            <form @submit.prevent="handleComment" class="flex gap-2">
+            <form class="flex gap-2" @submit.prevent="handleComment" novalidate>
+                <label :for="'comment-' + post.id" class="sr-only">
+                    Nuevo comentario
+                </label>
                 <input
+                    :id="'comment-' + post.id"
                     v-model="newComment"
-                    class="flex-1 rounded-lg border p-2 focus:border-orange-500 focus:outline-none"
+                    class="pet-input flex-1"
                     type="text"
-                    placeholder="Escribir comentario..."
+                    name="comment"
+                    placeholder="Comentar..."
                 >
 
-                <button class="rounded-lg bg-orange-500 px-4 py-2 text-white hover:bg-orange-600">
-                    Comentar
+                <button type="submit" class="pet-btn-primary shrink-0 px-5">
+                    Enviar
                 </button>
             </form>
         </section>

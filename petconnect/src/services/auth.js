@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from './Supabase';
 
 let user = null;
 let observers = [];
@@ -16,17 +16,26 @@ function notifyAll() {
     observers.forEach(callback => callback(user));
 }
 
-export async function register(email, password) {
+export function getAuthErrorMessage(error) {
+    if (error.status === 429) {
+        return 'Demasiados intentos seguidos. Esperá unos minutos y probá de nuevo.';
+    }
+
+    return error.message;
+}
+
+export async function register(email, password, username) {
     const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+            data: { username },
+        },
     });
 
     if (error) throw error;
 
-    const { data: sessionData } = await supabase.auth.getSession();
-
-    user = sessionData.session?.user || data.user;
+    user = data.session?.user || data.user;
     notifyAll();
 
     return user;

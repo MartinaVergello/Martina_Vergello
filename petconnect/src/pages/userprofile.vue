@@ -1,15 +1,22 @@
 <script>
-import { getProfileById } from '../services/profiles';
-import { getPostsByUser } from '../services/posts';
+import { getProfileById } from '../services/Profiles';
+import { getPostsByUser } from '../services/Posts';
+import PostCard from '../components/PostCard.vue';
 
 export default {
     name: 'UserProfile',
+    components: { PostCard },
     data() {
         return {
             profile: null,
             posts: [],
             error: '',
         };
+    },
+    computed: {
+        avatarInitial() {
+            return (this.profile?.username || 'U').charAt(0).toUpperCase();
+        },
     },
     async mounted() {
         await this.loadProfile();
@@ -35,33 +42,70 @@ export default {
 </script>
 
 <template>
-    <main class="mx-auto max-w-2xl p-6">
-        <p v-if="error" class="mb-3 text-red-600">{{ error }}</p>
+    <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <p v-if="error" role="alert" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-red-700">
+            {{ error }}
+        </p>
 
-        <section v-if="profile" class="mb-6 rounded bg-orange-50 p-4">
-            <h1 class="text-2xl font-bold text-orange-600">
-                {{ profile.username }}
-            </h1>
+        <section v-if="profile" class="pet-card overflow-hidden">
+            <div class="h-28 bg-pet-300 sm:h-36"></div>
 
-            <p class="mt-2 text-gray-700">
-                {{ profile.bio || 'Este usuario todavía no agregó una biografía.' }}
-            </p>
+            <div class="relative px-6 pb-6">
+                <div class="-mt-12 flex flex-col items-center gap-4 sm:-mt-14 sm:flex-row sm:items-end">
+                    <img
+                        v-if="profile.avatar"
+                        :src="profile.avatar"
+                        :alt="'Foto de perfil de ' + profile.username"
+                        class="avatar-ring h-24 w-24 rounded-full object-cover sm:h-28 sm:w-28"
+                    >
+
+                    <div
+                        v-else
+                        class="avatar-ring avatar-placeholder h-24 w-24 rounded-full text-2xl sm:h-28 sm:w-28"
+                        aria-hidden="true"
+                    >
+                        {{ avatarInitial }}
+                    </div>
+
+                    <div class="text-center sm:pb-2 sm:text-left">
+                        <h1 class="text-3xl font-bold text-pet-800">
+                            {{ profile.username }}
+                        </h1>
+                    </div>
+                </div>
+
+                <p class="mt-5 rounded-xl bg-pet-50 px-4 py-4 text-stone-700">
+                    {{ profile.bio || 'Sin biografía todavía.' }}
+                </p>
+            </div>
         </section>
 
-        <h2 class="mb-3 text-xl font-bold">Publicaciones</h2>
+        <div v-else-if="!error" class="empty-state">
+            <h1 class="font-display text-xl font-bold text-pet-800">
+                No encontramos ese usuario
+            </h1>
+        </div>
 
-        <section class="space-y-4">
-            <article
-                v-for="post in posts"
-                :key="post.id"
-                class="rounded border bg-white p-4"
-            >
-                <p>{{ post.content }}</p>
+        <section class="mt-8">
+            <h2 class="section-title mb-5">
+                Publicaciones
+            </h2>
 
-                <p class="mt-3 text-sm text-gray-500">
-                    {{ new Date(post.created_at).toLocaleString() }}
-                </p>
-            </article>
+            <div v-if="posts.length" class="space-y-6">
+                <PostCard
+                    v-for="post in posts"
+                    :key="post.id"
+                    :post="post"
+                    :user="null"
+                />
+            </div>
+
+            <div v-else class="empty-state">
+                <h3 class="font-display text-xl font-bold text-pet-800">
+                    Sin publicaciones
+                </h3>
+                <p class="mt-2">Capaz todavía no subió nada en publicaciones.</p>
+            </div>
         </section>
     </main>
 </template>

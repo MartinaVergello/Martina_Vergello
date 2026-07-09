@@ -1,5 +1,5 @@
 <script>
-import { login } from '../services/auth';
+import { login, getAuthErrorMessage } from '../services/Auth';
 
 export default {
     name: 'Login',
@@ -20,7 +20,7 @@ export default {
                 await login(this.email, this.password);
                 this.$router.push('/feed');
             } catch (error) {
-                this.error = error.message;
+                this.error = getAuthErrorMessage(error);
             }
 
             this.loading = false;
@@ -30,25 +30,55 @@ export default {
 </script>
 
 <template>
-    <main class="mx-auto max-w-md p-6">
-        <h1 class="mb-4 text-2xl font-bold">Iniciar sesión</h1>
+    <main class="mx-auto flex min-h-[70vh] max-w-md items-center px-4 py-10 sm:px-6">
+        <section class="pet-card w-full p-6 sm:p-8">
+            <h1 class="section-title mb-6 text-center">
+                Iniciar sesión
+            </h1>
 
-        <form @submit.prevent="handleSubmit" class="space-y-4">
-            <div>
-                <label class="mb-1 block">Email</label>
-                <input v-model="email" class="w-full rounded border p-2" type="email">
-            </div>
+            <form class="space-y-4" @submit.prevent="handleSubmit" novalidate>
+                <div>
+                    <label for="login-email" class="mb-2 block font-bold text-pet-800">Correo electrónico</label>
+                    <input
+                        id="login-email"
+                        v-model="email"
+                        class="pet-input"
+                        type="email"
+                        name="email"
+                        autocomplete="email"
+                        placeholder="tu@email.com"
+                        required
+                    >
+                </div>
 
-            <div>
-                <label class="mb-1 block">Contraseña</label>
-                <input v-model="password" class="w-full rounded border p-2" type="password">
-            </div>
+                <div>
+                    <label for="login-password" class="mb-2 block font-bold text-pet-800">Contraseña</label>
+                    <input
+                        id="login-password"
+                        v-model="password"
+                        class="pet-input"
+                        type="password"
+                        name="password"
+                        autocomplete="current-password"
+                        required
+                    >
+                </div>
 
-            <p v-if="error" class="text-red-600">{{ error }}</p>
+                <p v-if="error" role="alert" class="rounded-lg bg-red-50 px-4 py-3 text-red-700">
+                    {{ error }}
+                </p>
 
-            <button class="rounded bg-orange-500 px-4 py-2 text-white">
-                {{ loading ? 'Ingresando...' : 'Ingresar' }}
-            </button>
-        </form>
+                <button type="submit" class="pet-btn-primary w-full">
+                    {{ loading ? 'Entrando...' : 'Entrar' }}
+                </button>
+
+                <p class="text-center text-sm text-stone-500">
+                    ¿No tenés cuenta?
+                    <RouterLink to="/registro" class="font-bold text-pet-600 hover:underline">
+                        Registrate
+                    </RouterLink>
+                </p>
+            </form>
+        </section>
     </main>
 </template>

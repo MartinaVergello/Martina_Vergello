@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+
+# Build
+dist/
+
+# Consigna (no subir)
+*.pdf
+
+# Documentación / extras locales (no subir)
+README.md
+.htmlvalidate.json
+**/scripts/validate-html.mjs
+
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

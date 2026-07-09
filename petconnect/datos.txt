@@ -1,0 +1,9 @@
+Carrera: Tecnicatura Universitaria en Desarrollo de Software
+Materia: Clientes Web Mobile
+Cuatrimestre: 2do
+Año: 2026
+Turno: [completar turno]
+Comisión: DWM4AP
+Apellido y nombre: Vergello, Martina
+Docente: Santiago Gallino
+Carácter de entrega: 2do parcial
